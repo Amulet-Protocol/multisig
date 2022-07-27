@@ -23,7 +23,7 @@ use anchor_lang::solana_program::instruction::Instruction;
 use std::convert::Into;
 use std::ops::Deref;
 
-declare_id!("6tbPiQLgTU4ySYWyZGXbnVSAEzLc1uF8t5kJPXXgBmRP");
+declare_id!("LZL5VBaRWgPfrHtzsufzU3G3nWqnfFYa1o8ht5X3Nop");
 
 #[program]
 pub mod serum_multisig {
@@ -59,6 +59,7 @@ pub mod serum_multisig {
         accs: Vec<TransactionAccount>,
         data: Vec<u8>,
         successor: Option<Pubkey>,
+        time_to_live: u64,
     ) -> Result<()> {
         let owner_index = ctx
             .accounts
@@ -81,6 +82,8 @@ pub mod serum_multisig {
         tx.did_execute = false;
         tx.owner_set_seqno = ctx.accounts.multisig.owner_set_seqno;
         tx.successor = successor;
+        tx.time_to_live = time_to_live;
+        tx.created_epoch = ctx.accounts.sysvar_clock.epoch;
 
         Ok(())
     }
@@ -218,6 +221,10 @@ pub struct CreateTransaction<'info> {
     transaction: Box<Account<'info, Transaction>>,
     // One of the owners. Checked in the handler.
     proposer: Signer<'info>,
+    #[account(
+        address = solana_program::sysvar::clock::ID @ErrorCode::InvalidSysvarClock
+    )]
+    sysvar_clock: Sysvar<'info, Clock>
 }
 
 #[derive(Accounts)]
@@ -259,12 +266,18 @@ pub struct ExecuteTransaction<'info> {
 pub struct DropTransaction<'info> {
     #[account(
         mut,
-        constraint = transaction.did_execute,
+        constraint = transaction.did_execute ||
+            (sysvar_clock.epoch - transaction.created_epoch) > transaction.time_to_live,
         constraint = transaction.successor == Some(*successor.key),
     )]
     transaction: Box<Account<'info, Transaction>>,
+    /// CHECK: successor is verified in the transaction
     #[account(mut)]
     successor: AccountInfo<'info>,
+    #[account(
+        address = solana_program::sysvar::clock::ID @ErrorCode::InvalidSysvarClock
+    )]
+    sysvar_clock: Sysvar<'info, Clock>
 }
 
 #[account]
@@ -293,6 +306,10 @@ pub struct Transaction {
     pub owner_set_seqno: u32,
     // Account which receive rent exemption SOL after transaction executing.
     pub successor: Option<Pubkey>,
+    // Number of epochs before the transaction is considered expired.
+    pub time_to_live: u64,
+    // The epoch number when the transaction is created
+    pub created_epoch: u64
 }
 
 impl From<&Transaction> for Instruction {
@@ -363,4 +380,6 @@ pub enum ErrorCode {
     UniqueOwners,
     #[msg("Invalid successor account.")]
     InvalidSuccessor,
+    #[msg("Invalid sysvar_clock account.")]
+    InvalidSysvarClock,
 }
