@@ -1,5 +1,8 @@
 const anchor = require("@project-serum/anchor");
 const assert = require("assert");
+const sleepMillSeconds = (ms) => {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+};
 
 describe("multisig", () => {
   // Configure the client to use the local cluster.
@@ -62,13 +65,16 @@ describe("multisig", () => {
       owners: newOwners,
     });
 
+    const successor = anchor.web3.Keypair.generate();
     const transaction = anchor.web3.Keypair.generate();
     const txSize = 1000; // Big enough, cuz I'm lazy.
-    await program.rpc.createTransaction(pid, accounts, data, {
+    const ttl = new anchor.BN(1); // number of epoch
+    await program.rpc.createTransaction(pid, accounts, data, successor.publicKey, ttl, {
       accounts: {
         multisig: multisig.publicKey,
         transaction: transaction.publicKey,
         proposer: ownerA.publicKey,
+        sysvarClock: anchor.web3.SYSVAR_CLOCK_PUBKEY
       },
       instructions: [
         await program.account.transaction.createInstruction(
@@ -89,6 +95,9 @@ describe("multisig", () => {
     assert.ok(txAccount.multisig.equals(multisig.publicKey));
     assert.deepStrictEqual(txAccount.didExecute, false);
     assert.ok(txAccount.ownerSetSeqno === 0);
+    assert.ok(txAccount.timeToLive.eq(ttl));
+    assert.ok(txAccount.createdEpoch.gtn(0));
+    assert.ok(txAccount.successor.equals(successor.publicKey));
 
     // Other owner approves transactoin.
     await program.rpc.approve({
@@ -131,6 +140,21 @@ describe("multisig", () => {
     assert.ok(multisigAccount.threshold.eq(new anchor.BN(2)));
     assert.deepStrictEqual(multisigAccount.owners, newOwners);
     assert.ok(multisigAccount.ownerSetSeqno === 1);
+
+    await program.rpc.dropTransaction({
+      accounts: {
+        transaction: transaction.publicKey,
+        successor: successor.publicKey,
+        sysvarClock: anchor.web3.SYSVAR_CLOCK_PUBKEY
+      },
+    });
+
+    try {
+        transactionAccount = await program.account.transaction.fetch(transaction.publicKey);
+        assert.fail();
+    } catch (err) {
+        assert.ok(err.message.includes("Account does not exist"));
+    }
   });
 
   it("Assert Unique Owners", async () => {
@@ -167,5 +191,89 @@ describe("multisig", () => {
       assert.strictEqual(error.errorCode.number, 6008);
       assert.strictEqual(error.errorMessage, "Owners must be unique");
     }
+  });
+
+  it("Transaction should be able be dropped when ttl is expired", async () => {
+    const multisig = anchor.web3.Keypair.generate();
+    const [multisigSigner, nonce] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [multisig.publicKey.toBuffer()],
+        program.programId
+      );
+    const multisigSize = 200; // Big enough.
+
+    const ownerA = anchor.web3.Keypair.generate();
+    const owners = [ownerA.publicKey];
+
+    const threshold = new anchor.BN(1);
+    await program.rpc.createMultisig(owners, threshold, nonce, {
+      accounts: {
+        multisig: multisig.publicKey,
+      },
+      instructions: [
+        await program.account.multisig.createInstruction(
+          multisig,
+          multisigSize
+        ),
+      ],
+      signers: [multisig],
+    });
+
+    const pid = program.programId;
+    const accounts = [
+      {
+        pubkey: multisig.publicKey,
+        isWritable: true,
+        isSigner: false,
+      },
+      {
+        pubkey: multisigSigner,
+        isWritable: false,
+        isSigner: true,
+      },
+    ];
+    const newOwners = [ownerA.publicKey];
+    const data = program.coder.instruction.encode("set_owners", {
+      owners: newOwners,
+    });
+
+    const transaction = anchor.web3.Keypair.generate();
+    const successor = anchor.web3.Keypair.generate();
+    const txSize = 1000; // Big enough, cuz I'm lazy.
+    const ttl = new anchor.BN(1); // number of epoch
+    await program.rpc.createTransaction(pid, accounts, data, successor.publicKey, ttl, {
+      accounts: {
+        multisig: multisig.publicKey,
+        transaction: transaction.publicKey,
+        proposer: ownerA.publicKey,
+        sysvarClock: anchor.web3.SYSVAR_CLOCK_PUBKEY
+      },
+      instructions: [
+        await program.account.transaction.createInstruction(
+          transaction,
+          txSize
+        ),
+      ],
+      signers: [transaction, ownerA],
+    });
+
+    await sleepMillSeconds(30000);
+
+    await program.rpc.dropTransaction({
+      accounts: {
+        transaction: transaction.publicKey,
+        successor: successor.publicKey,
+        sysvarClock: anchor.web3.SYSVAR_CLOCK_PUBKEY
+      },
+    });
+
+    try {
+        transactionAccount = await program.account.transaction.fetch(transaction.publicKey);
+        assert.fail();
+    } catch (err) {
+        assert.ok(err.message.includes("Account does not exist"));
+    }
+    const successorAccBalance = await program.provider.connection.getBalance(successor.publicKey);
+    assert.ok(successorAccBalance > 0);
   });
 });

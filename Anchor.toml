@@ -5,13 +5,13 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [programs.mainnet]
-serum_multisig = "6tbPiQLgTU4ySYWyZGXbnVSAEzLc1uF8t5kJPXXgBmRP"
+serum_multisig = "LZL5VBaRWgPfrHtzsufzU3G3nWqnfFYa1o8ht5X3Nop"
 
 [programs.devnet]
 serum_multisig = "F3Uf5F61dmht1xuNNNkk3jnzj82TY56vVjVEhZALRkN"
 
 [programs.localnet]
-serum_multisig = "6tbPiQLgTU4ySYWyZGXbnVSAEzLc1uF8t5kJPXXgBmRP"
+serum_multisig = "LZL5VBaRWgPfrHtzsufzU3G3nWqnfFYa1o8ht5X3Nop"
 
 [scripts]
 test = "npx mocha -t 1000000 tests/"

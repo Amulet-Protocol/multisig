@@ -23,7 +23,7 @@ use anchor_lang::solana_program::instruction::Instruction;
 use std::convert::Into;
 use std::ops::Deref;
 
-declare_id!("6tbPiQLgTU4ySYWyZGXbnVSAEzLc1uF8t5kJPXXgBmRP");
+declare_id!("LZL5VBaRWgPfrHtzsufzU3G3nWqnfFYa1o8ht5X3Nop");
 
 #[program]
 pub mod serum_multisig {
@@ -58,6 +58,8 @@ pub mod serum_multisig {
         pid: Pubkey,
         accs: Vec<TransactionAccount>,
         data: Vec<u8>,
+        successor: Option<Pubkey>,
+        time_to_live: u64,
     ) -> Result<()> {
         let owner_index = ctx
             .accounts
@@ -79,6 +81,9 @@ pub mod serum_multisig {
         tx.multisig = ctx.accounts.multisig.key();
         tx.did_execute = false;
         tx.owner_set_seqno = ctx.accounts.multisig.owner_set_seqno;
+        tx.successor = successor;
+        tx.time_to_live = time_to_live;
+        tx.created_epoch = ctx.accounts.sysvar_clock.epoch;
 
         Ok(())
     }
@@ -190,6 +195,17 @@ pub mod serum_multisig {
 
         Ok(())
     }
+
+    // Move transaction rent exemption SOL
+    pub fn drop_transaction(ctx: Context<DropTransaction>) -> Result<()> {
+        let tx = ctx.accounts.transaction.to_account_info();
+        let mut tx_balance = tx.try_borrow_mut_lamports()?;
+        let successor = ctx.accounts.successor.to_account_info();
+        let mut successor_balance = successor.try_borrow_mut_lamports()?;
+        **successor_balance = (**successor_balance).checked_add(**tx_balance).unwrap();
+        **tx_balance = 0;
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -205,6 +221,10 @@ pub struct CreateTransaction<'info> {
     transaction: Box<Account<'info, Transaction>>,
     // One of the owners. Checked in the handler.
     proposer: Signer<'info>,
+    #[account(
+        address = solana_program::sysvar::clock::ID @ErrorCode::InvalidSysvarClock
+    )]
+    sysvar_clock: Sysvar<'info, Clock>
 }
 
 #[derive(Accounts)]
@@ -242,6 +262,24 @@ pub struct ExecuteTransaction<'info> {
     transaction: Box<Account<'info, Transaction>>,
 }
 
+#[derive(Accounts)]
+pub struct DropTransaction<'info> {
+    #[account(
+        mut,
+        constraint = transaction.did_execute ||
+            (sysvar_clock.epoch - transaction.created_epoch) > transaction.time_to_live,
+        constraint = transaction.successor == Some(*successor.key),
+    )]
+    transaction: Box<Account<'info, Transaction>>,
+    /// CHECK: successor is verified in the transaction
+    #[account(mut)]
+    successor: AccountInfo<'info>,
+    #[account(
+        address = solana_program::sysvar::clock::ID @ErrorCode::InvalidSysvarClock
+    )]
+    sysvar_clock: Sysvar<'info, Clock>
+}
+
 #[account]
 pub struct Multisig {
     pub owners: Vec<Pubkey>,
@@ -266,6 +304,12 @@ pub struct Transaction {
     pub did_execute: bool,
     // Owner set sequence number.
     pub owner_set_seqno: u32,
+    // Account which receive rent exemption SOL after transaction executing.
+    pub successor: Option<Pubkey>,
+    // Number of epochs before the transaction is considered expired.
+    pub time_to_live: u64,
+    // The epoch number when the transaction is created
+    pub created_epoch: u64
 }
 
 impl From<&Transaction> for Instruction {
@@ -334,4 +378,8 @@ pub enum ErrorCode {
     InvalidThreshold,
     #[msg("Owners must be unique")]
     UniqueOwners,
+    #[msg("Invalid successor account.")]
+    InvalidSuccessor,
+    #[msg("Invalid sysvar_clock account.")]
+    InvalidSysvarClock,
 }
