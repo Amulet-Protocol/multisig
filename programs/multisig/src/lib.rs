@@ -82,8 +82,7 @@ pub mod serum_multisig {
         tx.did_execute = false;
         tx.owner_set_seqno = ctx.accounts.multisig.owner_set_seqno;
         tx.successor = successor;
-        tx.time_to_live = time_to_live;
-        tx.created_epoch = ctx.accounts.sysvar_clock.epoch;
+        tx.expired_epoch = ctx.accounts.sysvar_clock.epoch + time_to_live;
 
         Ok(())
     }
@@ -266,8 +265,7 @@ pub struct ExecuteTransaction<'info> {
 pub struct DropTransaction<'info> {
     #[account(
         mut,
-        constraint = transaction.did_execute ||
-            (sysvar_clock.epoch - transaction.created_epoch) > transaction.time_to_live,
+        constraint = transaction.did_execute || sysvar_clock.epoch >= transaction.expired_epoch,
         constraint = transaction.successor == Some(*successor.key),
     )]
     transaction: Box<Account<'info, Transaction>>,
@@ -306,10 +304,8 @@ pub struct Transaction {
     pub owner_set_seqno: u32,
     // Account which receive rent exemption SOL after transaction executing.
     pub successor: Option<Pubkey>,
-    // Number of epochs before the transaction is considered expired.
-    pub time_to_live: u64,
-    // The epoch number when the transaction is created
-    pub created_epoch: u64
+    // The epoch number when the transaction is considered expired.
+    pub expired_epoch: u64,
 }
 
 impl From<&Transaction> for Instruction {

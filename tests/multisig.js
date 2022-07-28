@@ -95,8 +95,7 @@ describe("multisig", () => {
     assert.ok(txAccount.multisig.equals(multisig.publicKey));
     assert.deepStrictEqual(txAccount.didExecute, false);
     assert.ok(txAccount.ownerSetSeqno === 0);
-    assert.ok(txAccount.timeToLive.eq(ttl));
-    assert.ok(txAccount.createdEpoch.gtn(0));
+    assert.ok(txAccount.expiredEpoch.gt(ttl));
     assert.ok(txAccount.successor.equals(successor.publicKey));
 
     // Other owner approves transactoin.
@@ -257,7 +256,7 @@ describe("multisig", () => {
       signers: [transaction, ownerA],
     });
 
-    await sleepMillSeconds(30000);
+    await sleepMillSeconds(130000);
 
     await program.rpc.dropTransaction({
       accounts: {
