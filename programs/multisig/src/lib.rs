@@ -83,6 +83,7 @@ pub mod serum_multisig {
         tx.owner_set_seqno = ctx.accounts.multisig.owner_set_seqno;
         tx.successor = successor;
         tx.expired_epoch = ctx.accounts.sysvar_clock.epoch + time_to_live;
+        tx.created_slot = ctx.accounts.sysvar_clock.slot;
 
         Ok(())
     }
@@ -306,6 +307,8 @@ pub struct Transaction {
     pub successor: Option<Pubkey>,
     // The epoch number when the transaction is considered expired.
     pub expired_epoch: u64,
+    // The slot number when the transaction was created.
+    pub created_slot: u64
 }
 
 impl From<&Transaction> for Instruction {

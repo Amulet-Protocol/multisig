@@ -1,14 +1,21 @@
 const anchor = require("@project-serum/anchor");
 const assert = require("assert");
-const sleepMillSeconds = (ms) => {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-};
 
 describe("multisig", () => {
   // Configure the client to use the local cluster.
-  anchor.setProvider(anchor.getProvider());
-
+  const provider = anchor.getProvider();
+  anchor.setProvider(provider);
   const program = anchor.workspace.SerumMultisig;
+
+  const slotPerEpoch = async () => {
+    const epochInfo = await provider.connection.getEpochInfo();
+    return epochInfo.slotsInEpoch;
+  };
+  const sleepForAnEpoch = async () => {
+    const slot = await slotPerEpoch();
+    const ms = slot * 500; // 500ms per slot
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  };
 
   it("Tests the multisig program", async () => {
     const multisig = anchor.web3.Keypair.generate();
@@ -96,6 +103,7 @@ describe("multisig", () => {
     assert.deepStrictEqual(txAccount.didExecute, false);
     assert.ok(txAccount.ownerSetSeqno === 0);
     assert.ok(txAccount.expiredEpoch.gt(ttl));
+    assert.ok(txAccount.createdSlot.gtn(0));
     assert.ok(txAccount.successor.equals(successor.publicKey));
 
     // Other owner approves transactoin.
@@ -256,7 +264,7 @@ describe("multisig", () => {
       signers: [transaction, ownerA],
     });
 
-    await sleepMillSeconds(130000);
+    await sleepForAnEpoch();
 
     await program.rpc.dropTransaction({
       accounts: {
